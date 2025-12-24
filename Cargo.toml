@@ -1,0 +1,13 @@
+[package]
+name = "stridemap-partition"
+version = "0.1.0"
+rust-version = "1.92.0"
+edition = "2024"
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+doc_markdown = "warn"
+
+[dependencies]
