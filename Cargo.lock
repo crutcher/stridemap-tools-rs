@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "stridemap-partition"
+name = "stridemap-tools-rs"
 version = "0.1.0"
