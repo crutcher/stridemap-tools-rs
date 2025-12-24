@@ -208,16 +208,20 @@ pub struct ChunkIterator {
     sm: StrideMap,
     order: Vec<usize>,
     broadcast: bool,
+
+    next: Option<Vec<usize>>,
 }
 
 impl ChunkIterator {
     /// Create a new chunk iterator.
     pub fn new(sm: StrideMap, broadcast: bool) -> Self {
         let order = sm.desc_dim_order();
+        let least = sm.least_index();
         Self {
             sm,
             order,
             broadcast,
+            next: Some(least),
         }
     }
 }
