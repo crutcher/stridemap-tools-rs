@@ -1,4 +1,7 @@
 //! # `StrideMap`
+
+use crate::counters::StepCounter;
+
 /// A stride map for efficiently accessing elements in a multi-dimensional array.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StrideMap {
@@ -145,6 +148,16 @@ impl StrideMap {
         }
         index
     }
+
+    /// Returns an iterator over the mapped elements with the given step size.
+    pub fn step_iterator(&self, step: &[usize]) -> StepCounter {
+        let step = step.to_vec();
+
+        let start = vec![0; self.rank()];
+        let end = self.shape.to_vec();
+
+        StepCounter::new(start, end, step)
+    }
 }
 
 #[cfg(test)]
@@ -199,5 +212,30 @@ mod tests {
         assert_eq!(sm.desc_dim_order(), vec![0, 2, 3, 1]);
 
         assert_eq!(sm.least_index(), vec![0, 0, 2, 0]);
+    }
+
+    #[test]
+    fn test_stride_map_step_iterator() {
+        let elem_size = 4;
+        let shape = vec![2, 10, 3, 4];
+        let strides = vec![12, 0, -4, 1];
+
+        let sm = StrideMap::new(elem_size, shape.clone(), strides.clone());
+
+        let points = sm.step_iterator(&[1, 10, 2, 2]).collect::<Vec<_>>();
+
+        assert_eq!(
+            points,
+            vec![
+                vec![0, 0, 0, 0],
+                vec![0, 0, 0, 2],
+                vec![0, 0, 2, 0],
+                vec![0, 0, 2, 2],
+                vec![1, 0, 0, 0],
+                vec![1, 0, 0, 2],
+                vec![1, 0, 2, 0],
+                vec![1, 0, 2, 2],
+            ]
+        );
     }
 }
