@@ -1,8 +1,7 @@
 //! # `StrideMap`
 
 use crate::counters::StepCounter;
-use crate::vops::{assert_vle, vadd};
-use std::cmp::{max, min};
+use crate::vops::vadd;
 
 /// Describes a contiguous block of memory.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -152,21 +151,6 @@ impl StrideMap {
             .sum()
     }
 
-    /// Given a ``[start, end)` slice, returns the ravel offset and block size.
-    pub fn ravel_slice(&self, start: &[usize], end: &[usize]) -> BlockInfo {
-        assert_vle(start, end);
-
-        let start_offset = self.ravel_offset(start);
-        let end_offset = self.ravel_offset(end);
-
-        let offset = min(start_offset, end_offset);
-        let end = max(start_offset, end_offset);
-
-        let size = (end - offset) as usize;
-
-        BlockInfo { offset, size }
-    }
-
     /// Returns the offset of the given index.
     ///
     /// This is the `ravel_index` * element size.
@@ -303,6 +287,14 @@ mod tests {
                 end: vec![2, 2, 3]
             }]
         );
+
+        // TODO: this attempts to return [start, end) slices;
+        // even though the stride dimensions may be negative.
+        //
+        // iff these slices are correct, the start/end offset is still messy to find.
+        //
+        // however, it may be more correct to have a (partially) negative stencil,
+        // and start offset from sm.least_index(), rather than origin.
 
         // Non-contiguous at Middle, w/ Broadcast
         let shape = vec![2, 10, 2, 3, 20];
