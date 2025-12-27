@@ -91,6 +91,11 @@ impl StepCounter {
         }
     }
 
+    /// Get the rank of the range.
+    pub fn rank(&self) -> usize {
+        self.step_counter.start().len()
+    }
+
     /// Get the start of the range, inclusive.
     pub fn start(&self) -> &[usize] {
         &self.step_counter.start

@@ -1,6 +1,7 @@
 //! # `StrideMap`
 
 use crate::counters::StepCounter;
+use crate::vops::vadd;
 
 /// A stride map for efficiently accessing elements in a multi-dimensional array.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -158,11 +159,214 @@ impl StrideMap {
 
         StepCounter::new(start, end, step)
     }
+
+    /// Returns the maximum contiguous stencil for the stride map.
+    pub fn max_contiguous_stencil(&self) -> Vec<usize> {
+        let mut stencil = vec![1; self.rank()];
+        if self.rank() == 0 {
+            return stencil;
+        }
+
+        let order = self.asc_dim_order();
+
+        let mut first_non_broadcast = 0;
+
+        // scan past broadcast dimensions (stride == 0)
+        for &dim in &order {
+            if self.strides[dim] != 0 {
+                break;
+            }
+
+            stencil[dim] = self.shape[dim];
+            first_non_broadcast += 1;
+        }
+
+        if first_non_broadcast < self.rank() {
+            let dim = order[first_non_broadcast];
+            if self.strides[dim] > 1 {
+                return stencil;
+            }
+
+            stencil[dim] = self.shape[dim];
+        }
+
+        for idx in (first_non_broadcast + 1)..self.rank() {
+            let prev_dim = order[idx - 1];
+            let dim = order[idx];
+
+            let expected_abs_stride = self.shape[prev_dim] * self.strides[prev_dim].unsigned_abs();
+            let abs_stride = self.strides[dim].unsigned_abs();
+
+            if abs_stride != expected_abs_stride {
+                return stencil;
+            }
+
+            stencil[dim] = self.shape[dim];
+        }
+
+        stencil
+    }
+
+    /// Get an iterator over the contiguous tiles in the stride map.
+    pub fn contiguous_tiles(&self) -> TileCounter {
+        let stencil = self.max_contiguous_stencil();
+        TileCounter::new(self.step_iterator(&stencil), stencil)
+    }
+}
+
+/// `TileCounter` is used to generate tiles.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TileCounter {
+    step_counter: StepCounter,
+    tile_size: Vec<usize>,
+}
+
+impl TileCounter {
+    /// Create a new tile counter.
+    pub fn new(step_counter: StepCounter, tile_size: Vec<usize>) -> Self {
+        assert_eq!(step_counter.rank(), tile_size.len());
+        Self {
+            step_counter,
+            tile_size,
+        }
+    }
+
+    /// The rank of the counter.
+    pub fn rank(&self) -> usize {
+        self.step_counter.rank()
+    }
+}
+
+impl Iterator for TileCounter {
+    type Item = (Vec<usize>, Vec<usize>);
+
+    fn next(&mut self) -> Option<(Vec<usize>, Vec<usize>)> {
+        let start = self.step_counter.next()?;
+        let end = vadd(&start, &self.tile_size);
+        Some((start, end))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_contiguous_tiles() {
+        let elem_size = 1;
+
+        // Contiguous, Row-Order
+        let shape = vec![2, 2, 3];
+        let strides = vec![6, 3, 1];
+        let sm = StrideMap::new(elem_size, shape.clone(), strides);
+        assert_eq!(sm.max_contiguous_stencil(), shape);
+        assert_eq!(
+            sm.contiguous_tiles().collect::<Vec<_>>(),
+            vec![(vec![0, 0, 0], vec![2, 2, 3])]
+        );
+
+        // Non-contiguous at Middle, w/ Broadcast
+        let shape = vec![2, 10, 2, 3, 20];
+        let strides = vec![8, 0, 4, 1, 0];
+        let sm = StrideMap::new(elem_size, shape.clone(), strides);
+        assert_eq!(sm.max_contiguous_stencil(), vec![1, 10, 1, 3, 20]);
+        assert_eq!(
+            sm.contiguous_tiles().collect::<Vec<_>>(),
+            vec![
+                (vec![0, 0, 0, 0, 0], vec![1, 10, 1, 3, 20]),
+                (vec![0, 0, 1, 0, 0], vec![1, 10, 2, 3, 20]),
+                (vec![1, 0, 0, 0, 0], vec![2, 10, 1, 3, 20]),
+                (vec![1, 0, 1, 0, 0], vec![2, 10, 2, 3, 20]),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_contiguous_slices() {
+        let elem_size = 1;
+
+        // Contiguous, Row-Order
+        let shape = vec![2, 2, 3];
+        let strides = vec![6, 3, 1];
+        let sm = StrideMap::new(elem_size, shape.clone(), strides);
+
+        let stencil = sm.max_contiguous_stencil();
+        assert_eq!(&stencil, &shape);
+        assert_eq!(
+            sm.step_iterator(&stencil).collect::<Vec<_>>(),
+            vec![vec![0, 0, 0]]
+        );
+
+        // Non-contiguous at Middle, w/ Broadcast
+        let shape = vec![2, 10, 2, 3, 20];
+        let strides = vec![8, 0, 4, 1, 0];
+        let sm = StrideMap::new(elem_size, shape.clone(), strides);
+
+        let stencil = sm.max_contiguous_stencil();
+        assert_eq!(&stencil, &vec![1, 10, 1, 3, 20]);
+        assert_eq!(
+            sm.step_iterator(&stencil).collect::<Vec<_>>(),
+            vec![
+                vec![0, 0, 0, 0, 0],
+                vec![0, 0, 1, 0, 0],
+                vec![1, 0, 0, 0, 0],
+                vec![1, 0, 1, 0, 0],
+            ]
+        );
+    }
+
+    #[test]
+    fn test_max_contiguous_stencil() {
+        let elem_size = 1;
+
+        // Contiguous, Row-Order
+        let shape = vec![2, 2, 3];
+        let strides = vec![6, 3, 1];
+        let sm = StrideMap::new(elem_size, shape.clone(), strides);
+        assert_eq!(sm.max_contiguous_stencil(), shape);
+
+        // Contiguous, Shuffled
+        let shape = vec![2, 3, 2];
+        let strides = vec![6, 1, 3];
+        let sm = StrideMap::new(elem_size, shape.clone(), strides);
+        assert_eq!(sm.max_contiguous_stencil(), shape);
+
+        // Contiguous, Shuffled, w/ Broadcast
+        let shape = vec![2, 3, 10, 2];
+        let strides = vec![6, 1, 0, 3];
+        let sm = StrideMap::new(elem_size, shape.clone(), strides);
+        assert_eq!(sm.max_contiguous_stencil(), shape);
+
+        // Contiguous, Shuffled, w/ Broadcast and negative strides
+        let shape = vec![2, 3, 10, 2];
+        let strides = vec![6, 1, 0, -3];
+        let sm = StrideMap::new(elem_size, shape.clone(), strides);
+        assert_eq!(sm.max_contiguous_stencil(), shape);
+
+        // Non-contiguous at Least
+        let shape = vec![2, 2, 3];
+        let strides = vec![12, 6, 2];
+        let sm = StrideMap::new(elem_size, shape.clone(), strides);
+        assert_eq!(sm.max_contiguous_stencil(), vec![1, 1, 1]);
+
+        // Non-contiguous at Greatest
+        let shape = vec![2, 2, 3];
+        let strides = vec![7, 3, 1];
+        let sm = StrideMap::new(elem_size, shape.clone(), strides);
+        assert_eq!(sm.max_contiguous_stencil(), vec![1, 2, 3]);
+
+        // Non-contiguous at Middle
+        let shape = vec![2, 2, 3];
+        let strides = vec![8, 4, 1];
+        let sm = StrideMap::new(elem_size, shape.clone(), strides);
+        assert_eq!(sm.max_contiguous_stencil(), vec![1, 1, 3]);
+
+        // Non-contiguous at Middle, w/ Broadcast
+        let shape = vec![2, 10, 2, 3, 20];
+        let strides = vec![8, 0, 4, 1, 0];
+        let sm = StrideMap::new(elem_size, shape.clone(), strides);
+        assert_eq!(sm.max_contiguous_stencil(), vec![1, 10, 1, 3, 20]);
+    }
 
     #[test]
     fn stride_map_size() {

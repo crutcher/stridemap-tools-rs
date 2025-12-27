@@ -3,4 +3,4 @@
 
 pub mod counters;
 pub mod stridemap;
-pub mod zrange;
+pub mod vops;
