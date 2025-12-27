@@ -1,7 +1,28 @@
 //! # `StrideMap`
 
 use crate::counters::StepCounter;
-use crate::vops::vadd;
+use crate::vops::{assert_vle, vadd};
+use std::cmp::{max, min};
+
+/// Describes a contiguous block of memory.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BlockInfo {
+    /// The offset of the block.
+    pub offset: isize,
+
+    /// The size of the block in bytes.
+    pub size: usize,
+}
+
+/// Describes a contiguous tile of an array.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TileInfo {
+    /// The inclusive start of the tile.
+    pub start: Vec<usize>,
+
+    /// The exclusive end of the tile.
+    pub end: Vec<usize>,
+}
 
 /// A stride map for efficiently accessing elements in a multi-dimensional array.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -131,6 +152,21 @@ impl StrideMap {
             .sum()
     }
 
+    /// Given a ``[start, end)` slice, returns the ravel offset and block size.
+    pub fn ravel_slice(&self, start: &[usize], end: &[usize]) -> BlockInfo {
+        assert_vle(start, end);
+
+        let start_offset = self.ravel_offset(start);
+        let end_offset = self.ravel_offset(end);
+
+        let offset = min(start_offset, end_offset);
+        let end = max(start_offset, end_offset);
+
+        let size = (end - offset) as usize;
+
+        BlockInfo { offset, size }
+    }
+
     /// Returns the offset of the given index.
     ///
     /// This is the `ravel_index` * element size.
@@ -138,7 +174,7 @@ impl StrideMap {
         self.ravel_index(index) * (self.elem_size as isize)
     }
 
-    /// Returns the index of the location with least ravel index.
+    /// Returns the index of the location with the least ravel index.
     pub fn least_index(&self) -> Vec<usize> {
         let mut index = vec![0; self.rank()];
         for dim in self.desc_dim_order() {
@@ -238,12 +274,12 @@ impl TileCounter {
 }
 
 impl Iterator for TileCounter {
-    type Item = (Vec<usize>, Vec<usize>);
+    type Item = TileInfo;
 
-    fn next(&mut self) -> Option<(Vec<usize>, Vec<usize>)> {
+    fn next(&mut self) -> Option<Self::Item> {
         let start = self.step_counter.next()?;
         let end = vadd(&start, &self.tile_size);
-        Some((start, end))
+        Some(TileInfo { start, end })
     }
 }
 
@@ -262,7 +298,10 @@ mod tests {
         assert_eq!(sm.max_contiguous_stencil(), shape);
         assert_eq!(
             sm.contiguous_tiles().collect::<Vec<_>>(),
-            vec![(vec![0, 0, 0], vec![2, 2, 3])]
+            vec![TileInfo {
+                start: vec![0, 0, 0],
+                end: vec![2, 2, 3]
+            }]
         );
 
         // Non-contiguous at Middle, w/ Broadcast
@@ -273,10 +312,22 @@ mod tests {
         assert_eq!(
             sm.contiguous_tiles().collect::<Vec<_>>(),
             vec![
-                (vec![0, 0, 0, 0, 0], vec![1, 10, 1, 3, 20]),
-                (vec![0, 0, 1, 0, 0], vec![1, 10, 2, 3, 20]),
-                (vec![1, 0, 0, 0, 0], vec![2, 10, 1, 3, 20]),
-                (vec![1, 0, 1, 0, 0], vec![2, 10, 2, 3, 20]),
+                TileInfo {
+                    start: vec![0, 0, 0, 0, 0],
+                    end: vec![1, 10, 1, 3, 20]
+                },
+                TileInfo {
+                    start: vec![0, 0, 1, 0, 0],
+                    end: vec![1, 10, 2, 3, 20]
+                },
+                TileInfo {
+                    start: vec![1, 0, 0, 0, 0],
+                    end: vec![2, 10, 1, 3, 20]
+                },
+                TileInfo {
+                    start: vec![1, 0, 1, 0, 0],
+                    end: vec![2, 10, 2, 3, 20]
+                },
             ]
         );
     }
